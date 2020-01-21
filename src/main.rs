@@ -23,6 +23,87 @@ fn is_double_crnl(window: &[u8]) -> bool {
         (window[3] == '\n' as u8)
 }
 
+fn blocks(e: &std::io::Error) -> bool {
+    e.kind() == std::io::ErrorKind::WouldBlock
+}
+
+fn skip<T>(n: usize, vec: Vec<T>) -> Vec<T> {
+    vec.into_iter().skip(n).collect()
+}
+
+struct Handler<'a> {
+    poll: &'a Poll,
+    token: Token,
+    socket: TcpStream,
+    recv_buffer: Vec<u8>,
+    send_buffer: Vec<u8>,
+}
+
+impl Handler<'_> {
+    fn init(poll: &Poll, token: Token, socket: TcpStream) -> Handler {
+        poll.register(&socket, token, Ready::readable(), PollOpt::edge())
+            .unwrap();
+
+        Handler {
+            poll,
+            token,
+            socket,
+            recv_buffer: Vec::with_capacity(1024),
+            send_buffer: Vec::with_capacity(1024),
+        }
+    }
+
+    fn pull(&mut self) {
+        let mut buffer = [0 as u8; 1024];
+        loop {
+            let read = self.socket.read(&mut buffer);
+            match read {
+                Ok(0) =>
+                    return,
+                Ok(n) =>
+                    self.recv_buffer.extend_from_slice(&buffer[0..n]),
+                Err(ref e) if blocks(e) =>
+                    break,
+                Err(_) =>
+                    break
+            }
+        }
+
+        self.poll.register(&self.socket, self.token, Ready::readable(), PollOpt::edge())
+            .unwrap();
+    }
+
+    fn push(&mut self) {
+        self.socket.write_all(&self.send_buffer[..]).unwrap();
+
+        if !self.send_buffer.is_empty() {
+            self.poll.reregister(&self.socket, self.token, Ready::writable(), PollOpt::edge() | PollOpt::oneshot())
+                .unwrap();
+        }
+    }
+
+    fn pick<T>(&mut self, f: fn(&Vec<u8>) -> (usize, Option<T>)) -> Option<T> {
+        let (consumed, result_opt) = f(&self.recv_buffer);
+
+        if consumed > 0 {
+            let remaining = skip(consumed, self.recv_buffer.to_owned());
+            self.recv_buffer = remaining;
+        }
+
+        result_opt
+    }
+
+    fn put<T>(&mut self, result: T, f: fn(T) -> Vec<u8>) {
+        let mut bytes = f(result);
+        self.send_buffer.append(&mut bytes);
+
+        if !self.send_buffer.is_empty() {
+            self.poll.reregister(&self.socket, self.token, Ready::writable(), PollOpt::edge() | PollOpt::oneshot())
+                .unwrap();
+        }
+    }
+}
+
 fn main() {
     let address = "0.0.0.0:9000";
     let listener = TcpListener::bind(&address.parse().unwrap()).unwrap();
@@ -35,9 +116,7 @@ fn main() {
         PollOpt::edge()).unwrap();
 
     let mut counter: usize = 0;
-    let mut sockets: HashMap<Token, TcpStream> = HashMap::new();
-    let mut requests: HashMap<Token, Vec<u8>> = HashMap::new();
-    let mut buffer = [0 as u8; 1024];
+    let mut handlers: HashMap<Token, Handler> = HashMap::new();
 
     let mut events = Events::with_capacity(1024);
     loop {
@@ -50,66 +129,37 @@ fn main() {
                             Ok((socket, _)) => {
                                 counter += 1;
                                 let token = Token(counter);
-
-                                poll.register(
-                                    &socket,
-                                    token,
-                                Ready::readable(),
-                                PollOpt::edge()).unwrap();
-
-                                sockets.insert(token, socket);
-                                requests.insert(token, Vec::with_capacity(192));
+                                handlers.insert(token, Handler::init(&poll, token, socket));
                             },
-                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock =>
+                            Err(ref e) if blocks(e) =>
                                 break,
                             Err(_) => break
                         }
                     }
                 },
                 token if event.readiness().is_readable() => {
-                    loop {
-                        let read = sockets.get_mut(&token).unwrap().read(&mut buffer);
-                        match read {
-                            Ok(0) => {
-                                sockets.remove(&token);
-                                break
-                            },
-                            Ok(n) => {
-                                let req = requests.get_mut(&token).unwrap();
-                                for b in &buffer[0..n] {
-                                    req.push(*b);
-                                }
-                            },
-                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock =>
-                                break,
-                            Err(_) => break
+                    let handler = handlers.get_mut(&token).unwrap();
+                    handler.pull();
+                    let ready_opt = handler.pick(|bytes| {
+                        let found = bytes
+                            .windows(4)
+                            .find(|window| is_double_crnl(*window))
+                            .is_some();
+
+                        if found {
+                            (bytes.len(), Some(true))
+                        } else {
+                            (0, None)
                         }
-                    }
+                    });
 
-                    let ready = requests.get(&token).unwrap()
-                        .windows(4)
-                        .find(|window| is_double_crnl(*window))
-                        .is_some();
-
-                    if ready {
-                        let socket = sockets.get(&token).unwrap();
-                        poll.reregister(
-                            socket,
-                            token,
-                            Ready::writable(),
-                            PollOpt::edge() | PollOpt::oneshot()).unwrap();
+                    if ready_opt.unwrap_or(false) {
+                        handler.put(RESPONSE, |r: &str| r.as_bytes().to_owned().to_vec());
                     }
                 },
                 token if event.readiness().is_writable() => {
-                    requests.get_mut(&token).unwrap().clear();
-                    sockets.get_mut(&token).unwrap().write_all(RESPONSE.as_bytes()).unwrap();
-
-                    // Re-use existing connection ("keep-alive") - switch back to reading
-                    poll.reregister(
-                        sockets.get(&token).unwrap(),
-                        token,
-                        Ready::readable(),
-                        PollOpt::edge()).unwrap();
+                    let handler = handlers.get_mut(&token).unwrap();
+                    handler.push();
                 },
                 _ => unreachable!()
             }
