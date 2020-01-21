@@ -75,6 +75,15 @@ impl Handler<'_> {
 
     fn push(&mut self) {
         self.socket.write_all(&self.send_buffer[..]).unwrap();
+//        loop {
+//            let written = self.socket.write(&self.send_buffer[..]);
+//            match written {
+//                Ok(0) => return,
+//                Ok(n) => self.send_buffer = skip(n, self.send_buffer.to_owned()),
+//                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => break,
+//                Err(_) => break
+//            }
+//        }
 
         if !self.send_buffer.is_empty() {
             self.poll.reregister(&self.socket, self.token, Ready::writable(), PollOpt::edge() | PollOpt::oneshot())
