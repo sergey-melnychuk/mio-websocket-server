@@ -1,0 +1,9 @@
+[package]
+name = "mio-websocket-server"
+version = "0.0.1"
+authors = ["sergey-melnychuk"]
+edition = "2018"
+
+[dependencies]
+mio = "0.6"
+
