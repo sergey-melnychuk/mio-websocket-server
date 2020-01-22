@@ -37,6 +37,7 @@ struct Handler<'a> {
     socket: TcpStream,
     recv_buffer: Vec<u8>,
     send_buffer: Vec<u8>,
+    is_open: bool,
 }
 
 impl Handler<'_> {
@@ -50,6 +51,7 @@ impl Handler<'_> {
             socket,
             recv_buffer: Vec::with_capacity(1024),
             send_buffer: Vec::with_capacity(1024),
+            is_open: true,
         }
     }
 
@@ -58,8 +60,10 @@ impl Handler<'_> {
         loop {
             let read = self.socket.read(&mut buffer);
             match read {
-                Ok(0) =>
-                    return,
+                Ok(0) => {
+                    self.is_open = false;
+                    return
+                },
                 Ok(n) =>
                     self.recv_buffer.extend_from_slice(&buffer[0..n]),
                 Err(ref e) if blocks(e) =>
@@ -69,26 +73,23 @@ impl Handler<'_> {
             }
         }
 
-        self.poll.register(&self.socket, self.token, Ready::readable(), PollOpt::edge())
+        self.poll.reregister(&self.socket, self.token, Ready::readable(), PollOpt::edge())
             .unwrap();
     }
 
     fn push(&mut self) {
-        self.socket.write_all(&self.send_buffer[..]).unwrap();
-//        loop {
-//            let written = self.socket.write(&self.send_buffer[..]);
-//            match written {
-//                Ok(0) => return,
-//                Ok(n) => self.send_buffer = skip(n, self.send_buffer.to_owned()),
-//                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => break,
-//                Err(_) => break
-//            }
-//        }
-
-        if !self.send_buffer.is_empty() {
-            self.poll.reregister(&self.socket, self.token, Ready::writable(), PollOpt::edge() | PollOpt::oneshot())
-                .unwrap();
+        match self.socket.write_all(&self.send_buffer[..]) {
+            Ok(_) => (),
+            Err(_) => {
+                self.is_open = false;
+                return;
+            }
         }
+        self.send_buffer.clear();
+
+        // Re-register for reading event == reuse existing connection
+        self.poll.reregister(&self.socket, self.token, Ready::readable(), PollOpt::edge())
+            .unwrap();
     }
 
     fn pick<T>(&mut self, f: fn(&Vec<u8>) -> (usize, Option<T>)) -> Option<T> {
@@ -165,10 +166,18 @@ fn main() {
                     if ready_opt.unwrap_or(false) {
                         handler.put(RESPONSE, |r: &str| r.as_bytes().to_owned().to_vec());
                     }
+
+                    if !handler.is_open {
+                        handlers.remove(&token);
+                    }
                 },
                 token if event.readiness().is_writable() => {
                     let handler = handlers.get_mut(&token).unwrap();
                     handler.push();
+
+                    if !handler.is_open {
+                        handlers.remove(&token);
+                    }
                 },
                 _ => unreachable!()
             }
