@@ -2,10 +2,16 @@
 // $ ab -n 1000000 -c 128 -k http://127.0.0.1:9000/
 // $ wrk -d 30s -t 4 -c 128 http://127.0.0.1:9000/
 
+mod pool;
+
 use mio::net::{TcpListener, TcpStream};
 use mio::{Poll, Token, Ready, PollOpt, Events};
 use std::collections::HashMap;
 use std::io::{Read, Write};
+
+use crate::pool::ThreadPool;
+use std::thread::sleep;
+use std::time::Duration;
 
 static RESPONSE: &str = "HTTP/1.1 200 OK
 Content-Type: text/html
@@ -31,34 +37,31 @@ fn skip<T>(n: usize, vec: Vec<T>) -> Vec<T> {
     vec.into_iter().skip(n).collect()
 }
 
-struct Handler<'a> {
-    poll: &'a Poll,
+#[derive(Clone)]
+struct Handler {
     token: Token,
-    socket: TcpStream,
     recv_buffer: Vec<u8>,
     send_buffer: Vec<u8>,
     is_open: bool,
 }
 
-impl Handler<'_> {
-    fn init(poll: &Poll, token: Token, socket: TcpStream) -> Handler {
-        poll.register(&socket, token, Ready::readable(), PollOpt::edge())
+impl Handler {
+    fn init(token: Token, socket: &TcpStream, poll: &Poll) -> Handler {
+        poll.register(socket, token, Ready::readable(), PollOpt::edge())
             .unwrap();
 
         Handler {
-            poll,
             token,
-            socket,
             recv_buffer: Vec::with_capacity(1024),
             send_buffer: Vec::with_capacity(1024),
             is_open: true,
         }
     }
 
-    fn pull(&mut self) {
+    fn pull(&mut self, socket: &mut TcpStream, poll: &Poll) {
         let mut buffer = [0 as u8; 1024];
         loop {
-            let read = self.socket.read(&mut buffer);
+            let read = socket.read(&mut buffer);
             match read {
                 Ok(0) => {
                     self.is_open = false;
@@ -73,12 +76,12 @@ impl Handler<'_> {
             }
         }
 
-        self.poll.reregister(&self.socket, self.token, Ready::readable(), PollOpt::edge())
+        poll.reregister(socket, self.token, Ready::readable(), PollOpt::edge())
             .unwrap();
     }
 
-    fn push(&mut self) {
-        match self.socket.write_all(&self.send_buffer[..]) {
+    fn push(&mut self, socket: &mut TcpStream, poll: &Poll) {
+        match socket.write_all(&self.send_buffer[..]) {
             Ok(_) => (),
             Err(_) => {
                 self.is_open = false;
@@ -88,11 +91,11 @@ impl Handler<'_> {
         self.send_buffer.clear();
 
         // Re-register for reading event == reuse existing connection
-        self.poll.reregister(&self.socket, self.token, Ready::readable(), PollOpt::edge())
+        poll.reregister(socket, self.token, Ready::readable(), PollOpt::edge())
             .unwrap();
     }
 
-    fn pick<T>(&mut self, f: fn(&Vec<u8>) -> (usize, Option<T>)) -> Option<T> {
+    fn get<T>(&mut self, f: fn(&Vec<u8>) -> (usize, Option<T>)) -> Option<T> {
         let (consumed, result_opt) = f(&self.recv_buffer);
 
         if consumed > 0 {
@@ -103,12 +106,13 @@ impl Handler<'_> {
         result_opt
     }
 
-    fn put<T>(&mut self, result: T, f: fn(T) -> Vec<u8>) {
+    fn put<T>(&mut self, result: T, f: fn(T) -> Vec<u8>, socket: &TcpStream, poll: &Poll) {
         let mut bytes = f(result);
         self.send_buffer.append(&mut bytes);
 
         if !self.send_buffer.is_empty() {
-            self.poll.reregister(&self.socket, self.token, Ready::writable(), PollOpt::edge() | PollOpt::oneshot())
+            poll.reregister(socket, self.token,
+                            Ready::writable(), PollOpt::edge() | PollOpt::oneshot())
                 .unwrap();
         }
     }
@@ -126,7 +130,20 @@ fn main() {
         PollOpt::edge()).unwrap();
 
     let mut counter: usize = 0;
+    let mut sockets: HashMap<Token, TcpStream> = HashMap::new();
     let mut handlers: HashMap<Token, Handler> = HashMap::new();
+
+    {
+        // just as an example
+        let mut pool = ThreadPool::new(4);
+        for idx in 0..4 {
+            pool.submit(move || {
+                println!("job {} started", idx);
+                sleep(Duration::from_secs(3));
+                println!("job {} completed", idx);
+            });
+        }
+    }
 
     let mut events = Events::with_capacity(1024);
     loop {
@@ -139,7 +156,8 @@ fn main() {
                             Ok((socket, _)) => {
                                 counter += 1;
                                 let token = Token(counter);
-                                handlers.insert(token, Handler::init(&poll, token, socket));
+                                handlers.insert(token, Handler::init(token, &socket, &poll));
+                                sockets.insert(token, socket);
                             },
                             Err(ref e) if blocks(e) =>
                                 break,
@@ -149,8 +167,8 @@ fn main() {
                 },
                 token if event.readiness().is_readable() => {
                     let handler = handlers.get_mut(&token).unwrap();
-                    handler.pull();
-                    let ready_opt = handler.pick(|bytes| {
+                    handler.pull(sockets.get_mut(&token).unwrap(), &poll);
+                    let ready_opt = handler.get(|bytes| {
                         let found = bytes
                             .windows(4)
                             .find(|window| is_double_crnl(*window))
@@ -164,19 +182,24 @@ fn main() {
                     });
 
                     if ready_opt.unwrap_or(false) {
-                        handler.put(RESPONSE, |r: &str| r.as_bytes().to_owned().to_vec());
+                        handler.put(
+                            RESPONSE,
+                            |r: &str| r.as_bytes().to_owned().to_vec(),
+                            sockets.get_mut(&token).unwrap(), &poll);
                     }
 
                     if !handler.is_open {
                         handlers.remove(&token);
+                        sockets.remove(&token);
                     }
                 },
                 token if event.readiness().is_writable() => {
                     let handler = handlers.get_mut(&token).unwrap();
-                    handler.push();
+                    handler.push(sockets.get_mut(&token).unwrap(), &poll);
 
                     if !handler.is_open {
                         handlers.remove(&token);
+                        sockets.remove(&token);
                     }
                 },
                 _ => unreachable!()
