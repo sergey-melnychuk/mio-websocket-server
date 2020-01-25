@@ -167,7 +167,7 @@ fn main() {
 
     let mut events = Events::with_capacity(1024);
     loop {
-        poll.poll(&mut events, Some(Duration::from_millis(100))).unwrap();
+        poll.poll(&mut events, Some(Duration::from_millis(20))).unwrap();
         for event in &events {
             match event.token() {
                 Token(0) => {
