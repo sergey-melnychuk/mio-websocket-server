@@ -10,12 +10,11 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 
 use crate::pool::ThreadPool;
-use std::thread::sleep;
 use std::time::Duration;
 use std::sync::mpsc::{channel, Sender, Receiver};
 use std::sync::{Arc, Mutex};
 
-#[macro_use] extern crate log;
+extern crate log;
 extern crate env_logger;
 use log::debug;
 
@@ -29,10 +28,10 @@ hello
 
 fn is_double_crnl(window: &[u8]) -> bool {
     window.len() >= 4 &&
-        (window[0] == '\r' as u8) &&
-        (window[1] == '\n' as u8) &&
-        (window[2] == '\r' as u8) &&
-        (window[3] == '\n' as u8)
+        (window[0] == b'\r') &&
+        (window[1] == b'\n') &&
+        (window[2] == b'\r') &&
+        (window[3] == b'\n')
 }
 
 fn blocks(e: &std::io::Error) -> bool {
@@ -64,7 +63,7 @@ impl Handler {
         }
     }
 
-    fn pull(&mut self, socket: &mut TcpStream, poll: &Poll) {
+    fn pull(&mut self, socket: &mut TcpStream) {
         let mut buffer = [0 as u8; 1024];
         loop {
             let read = socket.read(&mut buffer);
@@ -83,7 +82,7 @@ impl Handler {
         }
     }
 
-    fn push(&mut self, socket: &mut TcpStream, poll: &Poll) {
+    fn push(&mut self, socket: &mut TcpStream) {
         match socket.write_all(&self.send_buffer[..]) {
             Ok(_) => (),
             Err(_) => {
@@ -134,7 +133,7 @@ fn main() {
     let (ready_tx, ready_rx): (Sender<Handler>, Receiver<Handler>) = channel();
 
     let mut pool = ThreadPool::new(4);
-    for idx in 0..pool.size() {
+    for _ in 0..pool.size() {
         let rx = Arc::clone(&rx);
         let ready_tx = ready_tx.clone();
         pool.submit(move || {
@@ -144,8 +143,7 @@ fn main() {
                 let opt = handler.get(|bytes| {
                     let found = bytes
                         .windows(4)
-                        .find(|window| is_double_crnl(*window))
-                        .is_some();
+                        .any(|window| is_double_crnl(window));
 
                     if found {
                         (bytes.len(), Some(true))
@@ -190,7 +188,7 @@ fn main() {
                     debug!("token {} readable", token.0);
                     match handlers.remove(&token) {
                         Some(mut handler) => {
-                            handler.pull(sockets.get_mut(&token).unwrap(), &poll);
+                            handler.pull(sockets.get_mut(&token).unwrap());
                             tx.send(handler).unwrap();
                         },
                         None => {
@@ -203,7 +201,7 @@ fn main() {
                 token if event.readiness().is_writable() => {
                     debug!("token {} writable", token.0);
                     let handler = handlers.get_mut(&token).unwrap();
-                    handler.push(sockets.get_mut(&token).unwrap(), &poll);
+                    handler.push(sockets.get_mut(&token).unwrap());
 
                     if handler.is_open {
                         poll.reregister(sockets.get(&token).unwrap(), token,
