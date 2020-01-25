@@ -165,6 +165,7 @@ fn main() {
 
     let mut events = Events::with_capacity(1024);
     loop {
+        // FIXME All networking code still happens in single thread!
         poll.poll(&mut events, Some(Duration::from_millis(20))).unwrap();
         for event in &events {
             match event.token() {
