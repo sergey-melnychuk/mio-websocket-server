@@ -6,4 +6,5 @@ edition = "2018"
 
 [dependencies]
 mio = "0.6"
-
+log = "0.4.8"
+env_logger = "0.7.1"
