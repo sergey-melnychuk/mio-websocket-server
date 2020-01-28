@@ -199,22 +199,14 @@ fn main() {
                 },
                 token if event.readiness().is_readable() => {
                     debug!("token {} readable", token.0);
-                    match handlers.remove(&token) {
-                        Some(mut handler) => {
-                            handler.do_recv = true;
-                            tx.send(handler).unwrap();
-                        },
-                        _ => ()
+                    if let Some(handler) = handlers.remove(&token) {
+                        tx.send(handler).unwrap();
                     }
                 },
                 token if event.readiness().is_writable() => {
                     debug!("token {} writable", token.0);
-                    match handlers.remove(&token) {
-                        Some(mut handler) => {
-                            handler.do_send = true;
-                            tx.send(handler).unwrap();
-                        },
-                        _ => ()
+                    if let Some(handler) = handlers.remove(&token) {
+                        tx.send(handler).unwrap();
                     }
                 },
                 _ => unreachable!()
