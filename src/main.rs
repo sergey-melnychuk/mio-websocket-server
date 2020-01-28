@@ -51,8 +51,6 @@ struct Handler {
     recv_buffer: Vec<u8>,
     send_buffer: Vec<u8>,
     is_open: bool,
-    do_recv: bool,
-    do_send: bool,
 }
 
 impl Handler {
@@ -63,8 +61,6 @@ impl Handler {
             recv_buffer: Vec::with_capacity(1024),
             send_buffer: Vec::with_capacity(1024),
             is_open: true,
-            do_recv: true,
-            do_send: true,
         }
     }
 
@@ -149,25 +145,23 @@ fn main() {
                 let mut handler = rx.lock().unwrap().recv().unwrap();
                 debug!("token {} background thread", handler.token.0);
 
-                if handler.do_recv {
-                    handler.pull();
-                    let opt = handler.get(|bytes| {
-                        let found = bytes
-                            .windows(4)
-                            .any(|window| is_double_crnl(window));
+                handler.pull();
+                let opt = handler.get(|bytes| {
+                    let found = bytes
+                        .windows(4)
+                        .any(|window| is_double_crnl(window));
 
-                        if found {
-                            (bytes.len(), Some(true))
-                        } else {
-                            (0, None)
-                        }
-                    });
-                    if opt.unwrap_or(false) {
-                        handler.put(RESPONSE, |r: &str| r.as_bytes().to_owned().to_vec());
+                    if found {
+                        (bytes.len(), Some(true))
+                    } else {
+                        (0, None)
                     }
+                });
+                if opt.unwrap_or(false) {
+                    handler.put(RESPONSE, |r: &str| r.as_bytes().to_owned().to_vec());
                 }
 
-                if handler.do_send {
+                if !handler.send_buffer.is_empty() {
                     handler.push();
                 }
 
