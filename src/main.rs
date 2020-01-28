@@ -61,8 +61,8 @@ impl Handler {
             recv_buffer: Vec::with_capacity(1024),
             send_buffer: Vec::with_capacity(1024),
             is_open: true,
-            do_recv: false,
-            do_send: false,
+            do_recv: true,
+            do_send: true,
         }
     }
 
@@ -225,19 +225,17 @@ fn main() {
                 Ok(handler) if !handler.is_open => {
                     debug!("token {} closed", handler.token.0);
                 },
-                Ok(mut handler) => {
+                Ok(handler) => {
                     if handler.send_buffer.len() > 0 {
                         debug!("token {} has something to send", handler.token.0);
                         poll.reregister(&handler.socket, handler.token,
                                         Ready::writable(), PollOpt::edge() | PollOpt::oneshot())
                             .unwrap();
-                        handler.do_send = true;
                     } else {
                         debug!("token {} can receive something", handler.token.0);
                         poll.reregister(&handler.socket, handler.token,
                                         Ready::readable(), PollOpt::edge())
                             .unwrap();
-                        handler.do_recv = true;
                     }
                     handlers.insert(handler.token, handler);
                 },
