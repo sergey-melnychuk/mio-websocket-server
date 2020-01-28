@@ -191,7 +191,6 @@ fn main() {
                                 handlers.insert(token, Handler::init(token, socket));
                                 debug!("token {} connected", token.0);
                             },
-                            //Err(ref e) if blocks(e) => break,
                             Err(_) => break
                         }
                     }
