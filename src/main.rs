@@ -32,6 +32,8 @@ fn is_double_crnl(window: &[u8]) -> bool {
         (window[1] == b'\n') &&
         (window[2] == b'\r') &&
         (window[3] == b'\n')
+    // this is much slower (60k vs 75k rps):
+    // window == [b'\r', b'\n', b'\r', b'\n']
 }
 
 fn blocks(e: &std::io::Error) -> bool {
