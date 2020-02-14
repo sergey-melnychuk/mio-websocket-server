@@ -1,7 +1,3 @@
-// Benchmarks:
-// $ ab -n 1000000 -c 128 -k http://127.0.0.1:9000/
-// $ wrk -d 30s -t 4 -c 128 http://127.0.0.1:9000/
-
 mod pool;
 
 use mio::net::{TcpListener, TcpStream};
@@ -82,7 +78,7 @@ impl Handler {
 
     fn put<T>(&mut self, result: T, f: fn(T) -> Vec<u8>) {
         debug!("token {} put", self.token.0);
-        let mut bytes = f(result);
+        let bytes = f(result);
         self.send_stream.put(&bytes);
     }
 }
@@ -126,7 +122,9 @@ fn main() {
                     handler.put(RESPONSE, |r: &str| r.as_bytes().to_owned().to_vec());
                 };
 
-                handler.push();
+                if handler.send_stream.len() > 0 {
+                    handler.push();
+                }
 
                 ready_tx.send(handler).unwrap();
             }
@@ -146,7 +144,8 @@ fn main() {
                                 counter += 1;
                                 let token = Token(counter);
                                 poll.register(&socket, token,
-                                              Ready::readable(), PollOpt::edge())
+                                              Ready::readable(),
+                                              PollOpt::edge())
                                     .unwrap();
                                 handlers.insert(token, Handler::init(token, socket));
                                 debug!("token {} connected", token.0);
