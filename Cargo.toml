@@ -8,4 +8,4 @@ edition = "2018"
 mio = "0.6"
 log = "0.4.8"
 env_logger = "0.7.1"
-parser-combinators = { git = "https://github.com/sergey-melnychuk/rust-parser-combinators", tag = "0.1.0" }
+parser-combinators = { git = "https://github.com/sergey-melnychuk/rust-parser-combinators", tag = "0.1.2" }

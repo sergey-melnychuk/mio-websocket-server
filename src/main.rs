@@ -11,16 +11,62 @@ use std::sync::mpsc::{channel, Sender, Receiver};
 use std::sync::{Arc, Mutex};
 
 use parser_combinators::stream::ByteStream;
-use parser_combinators::http::parse_http_request;
+use parser_combinators::http::{parse_http_request, Request, Header, Response};
 
 use log::debug;
 extern crate log;
 extern crate env_logger;
 
-static RESPONSE: &str = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: keep-alive\r\nContent-Length: 6\r\n\r\nhello\n";
-
 fn blocks(e: &std::io::Error) -> bool {
     e.kind() == std::io::ErrorKind::WouldBlock
+}
+
+fn get_header<'a>(headers: &'a Vec<Header>, name: &String) -> Option<&'a String> {
+    headers.iter()
+        .find(|h| &h.name == name)
+        .map(|h| &h.value)
+}
+
+fn handle(req: Request) -> Response {
+    let connection = get_header(&req.headers, &"Connection".to_string()) == Some(&"Upgrade".to_string());
+    let upgrade = get_header(&req.headers, &"Upgrade".to_string()) == Some(&"websocket".to_string());
+
+    if connection && upgrade {
+        Response {
+            protocol: "HTTP/1.1".to_string(),
+            code: 101,
+            message: "Switching Protocols".to_string(),
+            headers: vec![
+                Header {
+                    name: "Upgrade".to_string(),
+                    value: "websocket".to_string(),
+                },
+                Header {
+                    name: "Connection".to_string(),
+                    value: "Upgrade".to_string(),
+                },
+                Header {
+                    name: "Sec-WebSocket-Accept".to_string(),
+                    value: "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".to_string(),
+// TODO FIXME
+// Response['Sec-WebSocket-Accept'] = base64(sha1( Request['Sec-WebSocket-Key'] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11" ))
+                },
+            ],
+            content: vec![]
+        }
+    } else {
+        Response {
+            protocol: "HTTP/1.1".to_string(),
+            code: 200,
+            message: "OK".to_string(),
+            headers: vec![
+                Header { name: "Content-Type".to_string(), value: "text/html".to_string(), },
+                Header { name: "Connection".to_string(), value: "keep-alive".to_string(), },
+                Header { name: "Content-Length".to_string(), value: "6".to_string(), },
+            ],
+            content: "hello\n".as_bytes().to_vec(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -77,8 +123,8 @@ impl Handler {
     }
 
     fn put<T>(&mut self, result: T, f: fn(T) -> Vec<u8>) {
-        debug!("token {} put", self.token.0);
         let bytes = f(result);
+        debug!("token {} put: {:?}", self.token.0, bytes);
         self.send_stream.put(&bytes);
     }
 }
@@ -119,7 +165,9 @@ fn main() {
                 if let Some(req) = req_opt {
                     debug!("request: {:?}", req);
                     handler.recv_stream.pull();
-                    handler.put(RESPONSE, |r: &str| r.as_bytes().to_owned().to_vec());
+                    let res = handle(req);
+                    debug!("response: {:?}", res);
+                    handler.put(res.into(), |r: String| r.as_bytes().to_owned());
                 };
 
                 if handler.send_stream.len() > 0 {
@@ -133,7 +181,6 @@ fn main() {
 
     let mut events = Events::with_capacity(1024);
     loop {
-        // FIXME All networking code still happens in single thread!
         poll.poll(&mut events, Some(Duration::from_millis(20))).unwrap();
         for event in &events {
             match event.token() {
