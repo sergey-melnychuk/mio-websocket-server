@@ -1,14 +1,20 @@
 # mio-websocket-server
 Async implementation of websocket server with mio and parser combinators
 
-## WIP
+### Running locally
 
-#### Bench
+1. `RUST_LOG=debug cargo run`
+1. Open `client.html` in browser
+1. `[26/04/2020, 15:17:40] connected`
+1. `[26/04/2020, 15:17:40] sent: hello!`
+1. `[26/04/2020, 15:17:40] received 'ECHO: 'hello!'`
+
+### Quick benchmarking
 
 - n1-standard-8 (8 vCPUs, 30 GB memory)
 - `wrk -d 30s -t 4 -c 128 http://127.0.0.1:9000/`
 
-#### Single-thread
+#### Single-thread (hard-coded response): [mio-tcp-server](https://github.com/sergey-melnychuk/mio-tcp-server)
 
 ```
 Running 30s test @ http://127.0.0.1:8080/
@@ -21,7 +27,7 @@ Requests/sec: 109134.67
 Transfer/sec:      9.16MB
 ```
 
-#### Plain
+#### Multi-threaded (hard-coded response)
 
 ```
 Running 30s test @ http://127.0.0.1:9000/
@@ -34,7 +40,7 @@ Requests/sec: 261810.66
 Transfer/sec:     21.97MB
 ```
 
-#### Parser
+#### Multi-threader (request parsing + response serialization)
 
 ```
 Running 30s test @ http://127.0.0.1:9000/
@@ -45,17 +51,4 @@ Running 30s test @ http://127.0.0.1:9000/
   4789399 requests in 30.10s, 424.78MB read
 Requests/sec: 159116.81
 Transfer/sec:     14.11MB
-```
-
-#### Actix 'hello-world'
-
-```
-Running 30s test @ http://127.0.0.1:9000/
-  4 threads and 128 connections
-  Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency     0.89ms    1.49ms  35.77ms   94.19%
-    Req/Sec    47.15k     5.42k   67.64k    68.78%
-  5637074 requests in 30.09s, 693.50MB read
-Requests/sec: 187323.72
-Transfer/sec:     23.05MB
 ```
