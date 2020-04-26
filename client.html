@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>WebSocket client</title>
+    <script language="JavaScript">
+        var client = new WebSocket("ws://localhost:9000");
+        client.onopen = function(evt) {
+            console.log('connected');
+            document.getElementById('result').innerText = 'connected';
+
+            client.send("hello!");
+        };
+        client.onclose = function(evt) {
+            console.log('disconnected');
+            document.getElementById('result').innerText = 'disconnected';
+        };
+    </script>
+</head>
+<body>
+    <div id="result"></div>
+</body>
+
+</html>
