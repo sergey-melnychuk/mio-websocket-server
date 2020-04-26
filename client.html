@@ -4,17 +4,33 @@
     <meta charset="UTF-8">
     <title>WebSocket client</title>
     <script language="JavaScript">
+        function log(data) {
+            var timestamp = '[' + new Date().toLocaleString() + '] ';
+            var message = timestamp + data;
+            console.log(message);
+            var result = document.getElementById('result');
+            var p = document.createElement("p");
+            p.innerText = message;
+            result.appendChild(p);
+        }
+
         var client = new WebSocket("ws://localhost:9000");
         client.onopen = function(evt) {
-            console.log('connected');
-            document.getElementById('result').innerText = 'connected';
+            log('connected');
 
-            client.send("hello!");
+            var message = "hello!";
+            client.send(message);
+            log("sent: " + message);
         };
         client.onclose = function(evt) {
-            console.log('disconnected');
-            document.getElementById('result').innerText = 'disconnected';
+            log('disconnected');
         };
+        client.onmessage = function(evt) {
+            log("received '" + evt.data + "'");
+        };
+        client.onerror = function(evt) {
+            log("error: " + evt.data);
+        }
     </script>
 </head>
 <body>
