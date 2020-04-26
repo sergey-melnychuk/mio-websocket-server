@@ -11,13 +11,14 @@ use std::sync::mpsc::{channel, Sender, Receiver};
 use std::sync::{Arc, Mutex};
 
 use parser_combinators::stream::ByteStream;
-use parser_combinators::http::{parse_http_request, Request, Header, Response};
+use parser_combinators::http::{parse_http_request, Request, Header, Response, as_string};
 
 use log::debug;
 extern crate log;
 extern crate env_logger;
 
 use sha1::{Sha1, Digest};
+use parser_combinators::ws::{parse_frame, decode_frame_body, Frame};
 
 fn blocks(e: &std::io::Error) -> bool {
     e.kind() == std::io::ErrorKind::WouldBlock
@@ -108,6 +109,7 @@ impl Handler {
             let read = self.socket.read(&mut buffer);
             match read {
                 Ok(0) => {
+                    debug!("token {} read 0 bytes - flagging as closed", self.token.0);
                     self.is_open = false;
                     return
                 },
@@ -171,22 +173,31 @@ fn main() {
             loop {
                 let mut handler = rx.lock().unwrap().recv().unwrap();
                 debug!("token {} background thread", handler.token.0);
-
                 handler.pull();
 
-                let req_opt = parse_http_request(&mut handler.recv_stream);
-                if let Some(req) = req_opt {
+                if let Some(req) = parse_http_request(&mut handler.recv_stream) {
                     debug!("request: {:?}", req);
                     handler.recv_stream.pull();
                     let res = handle(req);
                     debug!("response: {:?}", res);
                     handler.put(res.into(), |r: String| r.as_bytes().to_owned());
-                };
+                } else if let Some(frame) = parse_frame(&mut handler.recv_stream) {
+                    debug!("ws frame: {:?}", frame);
+                    handler.recv_stream.pull();
+                    if frame.opcode != 8u8 { // opcode 0x08 represents CLOSE event
+                        let body = frame
+                            .mask.map(|mask| decode_frame_body(&frame.body, &mask))
+                            .unwrap_or_default();
+                        let body_as_string = as_string(body);
+                        debug!("ws frame body: '{}'", body_as_string);
 
-                if handler.send_stream.len() > 0 {
-                    handler.push();
+                        let res = Frame::text(&format!("ECHO: '{}'", body_as_string));
+                        debug!("ws response: {:?}", res);
+                        handler.put(res.into(), |x| x)
+                    }
                 }
 
+                handler.push();
                 ready_tx.send(handler).unwrap();
             }
         });
