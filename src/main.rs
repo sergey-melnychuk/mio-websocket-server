@@ -17,6 +17,8 @@ use log::debug;
 extern crate log;
 extern crate env_logger;
 
+use sha1::{Sha1, Digest};
+
 fn blocks(e: &std::io::Error) -> bool {
     e.kind() == std::io::ErrorKind::WouldBlock
 }
@@ -27,11 +29,23 @@ fn get_header<'a>(headers: &'a Vec<Header>, name: &String) -> Option<&'a String>
         .map(|h| &h.value)
 }
 
+fn res_sec_websocket_accept(req_sec_websocket_key: &String) -> String {
+    let mut hasher = Sha1::new();
+    hasher.input(req_sec_websocket_key.to_owned() + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+    base64::encode(hasher.result())
+}
+
+// https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers
 fn handle(req: Request) -> Response {
     let connection = get_header(&req.headers, &"Connection".to_string()) == Some(&"Upgrade".to_string());
     let upgrade = get_header(&req.headers, &"Upgrade".to_string()) == Some(&"websocket".to_string());
 
     if connection && upgrade {
+        let sec_websocket_accept =
+            get_header(&req.headers, &"Sec-WebSocket-Key".to_string())
+                .map(res_sec_websocket_accept)
+                .unwrap_or_default();
+
         Response {
             protocol: "HTTP/1.1".to_string(),
             code: 101,
@@ -47,9 +61,7 @@ fn handle(req: Request) -> Response {
                 },
                 Header {
                     name: "Sec-WebSocket-Accept".to_string(),
-                    value: "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".to_string(),
-// TODO FIXME
-// Response['Sec-WebSocket-Accept'] = base64(sha1( Request['Sec-WebSocket-Key'] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11" ))
+                    value: sec_websocket_accept,
                 },
             ],
             content: vec![]
@@ -100,6 +112,7 @@ impl Handler {
                     return
                 },
                 Ok(n) => {
+                    debug!("token {} received: {:?}", self.token.0, &buffer[0..n]);
                     self.recv_stream.put(&buffer[0..n]);
                 },
                 Err(ref e) if blocks(e) =>
