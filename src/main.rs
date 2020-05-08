@@ -38,8 +38,12 @@ fn res_sec_websocket_accept(req_sec_websocket_key: &String) -> String {
 
 // https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers
 fn handle(req: Request) -> Response {
-    let connection = get_header(&req.headers, &"Connection".to_string()) == Some(&"Upgrade".to_string());
-    let upgrade = get_header(&req.headers, &"Upgrade".to_string()) == Some(&"websocket".to_string());
+    let connection = get_header(&req.headers, &"Connection".to_string())
+        .map(|h| h.contains("Upgrade"))
+        .unwrap_or_default();
+    let upgrade = get_header(&req.headers, &"Upgrade".to_string())
+        .map(|h| h.contains("websocket"))
+        .unwrap_or_default();
 
     if connection && upgrade {
         let sec_websocket_accept =
