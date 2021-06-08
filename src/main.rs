@@ -24,13 +24,13 @@ fn blocks(e: &std::io::Error) -> bool {
     e.kind() == std::io::ErrorKind::WouldBlock
 }
 
-fn get_header<'a>(headers: &'a Vec<Header>, name: &String) -> Option<&'a String> {
+fn get_header<'a>(headers: &'a Vec<Header>, name: &str) -> Option<&'a str> {
     headers.iter()
         .find(|h| &h.name == name)
-        .map(|h| &h.value)
+        .map(|h| h.value.as_str())
 }
 
-fn res_sec_websocket_accept(req_sec_websocket_key: &String) -> String {
+fn res_sec_websocket_accept(req_sec_websocket_key: &str) -> String {
     let mut hasher = Sha1::new();
     hasher.input(req_sec_websocket_key.to_owned() + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
     base64::encode(hasher.result())
@@ -38,16 +38,16 @@ fn res_sec_websocket_accept(req_sec_websocket_key: &String) -> String {
 
 // https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers
 fn handle(req: Request) -> Response {
-    let connection = get_header(&req.headers, &"Connection".to_string())
+    let connection = get_header(&req.headers, "Connection")
         .map(|h| h.contains("Upgrade"))
         .unwrap_or_default();
-    let upgrade = get_header(&req.headers, &"Upgrade".to_string())
+    let upgrade = get_header(&req.headers, "Upgrade")
         .map(|h| h.contains("websocket"))
         .unwrap_or_default();
 
     if connection && upgrade {
         let sec_websocket_accept =
-            get_header(&req.headers, &"Sec-WebSocket-Key".to_string())
+            get_header(&req.headers, "Sec-WebSocket-Key")
                 .map(res_sec_websocket_accept)
                 .unwrap_or_default();
 
