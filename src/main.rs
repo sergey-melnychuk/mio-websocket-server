@@ -1,24 +1,24 @@
-mod pool;
-
-use mio::net::{TcpListener, TcpStream};
-use mio::{Poll, Token, Ready, PollOpt, Events};
-use std::collections::HashMap;
-use std::io::{Read, Write};
-
-use crate::pool::ThreadPool;
-use std::time::Duration;
-use std::sync::mpsc::{channel, Sender, Receiver};
-use std::sync::{Arc, Mutex};
-
-use parser_combinators::stream::ByteStream;
-use parser_combinators::http::{parse_http_request, Request, Header, Response, as_string};
-
 use log::debug;
 extern crate log;
 extern crate env_logger;
 
+use std::io::{Read, Write};
+use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::mpsc::{channel, Sender, Receiver};
+use std::sync::{Arc, Mutex};
+
+use mio::net::{TcpListener, TcpStream};
+use mio::{Poll, Token, Ready, PollOpt, Events};
 use sha1::{Sha1, Digest};
-use parser_combinators::ws::{parse_frame, decode_frame_body, Frame};
+
+use parsed::stream::ByteStream;
+use parsed::http::{parse_http_request, Request, Header, Response, as_string};
+use parsed::ws::{Frame, parse_frame, decode_frame_body};
+
+mod pool;
+use crate::pool::ThreadPool;
+
 
 fn blocks(e: &std::io::Error) -> bool {
     e.kind() == std::io::ErrorKind::WouldBlock
