@@ -9,7 +9,7 @@ use std::sync::mpsc::{channel, Sender, Receiver};
 use std::sync::{Arc, Mutex};
 
 use mio::net::{TcpListener, TcpStream};
-use mio::{Poll, Token, Ready, PollOpt, Events};
+use mio::{Poll, Token, Events, Interest};
 use sha1::{Sha1, Digest};
 
 use parsed::stream::ByteStream;
@@ -152,14 +152,13 @@ fn main() {
     env_logger::init();
 
     let address = "0.0.0.0:9000";
-    let listener = TcpListener::bind(&address.parse().unwrap()).unwrap();
+    let mut listener = TcpListener::bind(address.parse().unwrap()).unwrap();
 
-    let poll = Poll::new().unwrap();
-    poll.register(
-        &listener,
+    let mut poll = Poll::new().unwrap();
+    poll.registry().register(
+        &mut listener,
         Token(0),
-        Ready::readable(),
-        PollOpt::edge()).unwrap();
+        Interest::READABLE).unwrap();
 
     let mut counter: usize = 0;
     let mut handlers: HashMap<Token, Handler> = HashMap::new();
@@ -215,12 +214,11 @@ fn main() {
                 Token(0) => {
                     loop {
                         match listener.accept() {
-                            Ok((socket, _)) => {
+                            Ok((mut socket, _)) => {
                                 counter += 1;
                                 let token = Token(counter);
-                                poll.register(&socket, token,
-                                              Ready::readable(),
-                                              PollOpt::edge())
+                                poll.registry().register(&mut socket, token,
+                                              Interest::READABLE)
                                     .unwrap();
                                 handlers.insert(token, Handler::init(token, socket));
                                 debug!("token {} connected", token.0);
@@ -229,13 +227,13 @@ fn main() {
                         }
                     }
                 },
-                token if event.readiness().is_readable() => {
+                token if event.is_readable() => {
                     debug!("token {} readable", token.0);
                     if let Some(handler) = handlers.remove(&token) {
                         tx.send(handler).unwrap();
                     }
                 },
-                token if event.readiness().is_writable() => {
+                token if event.is_writable() => {
                     debug!("token {} writable", token.0);
                     if let Some(handler) = handlers.remove(&token) {
                         tx.send(handler).unwrap();
@@ -251,17 +249,16 @@ fn main() {
                 Ok(handler) if !handler.is_open => {
                     debug!("token {} closed", handler.token.0);
                 },
-                Ok(handler) => {
+                Ok(mut handler) => {
                     if handler.send_stream.len() > 0 {
                         debug!("token {} has something to send", handler.token.0);
-                        poll.reregister(&handler.socket, handler.token,
-                                        Ready::writable(),
-                                        PollOpt::edge() | PollOpt::oneshot())
+                        poll.registry().reregister(&mut handler.socket, handler.token,
+                                        Interest::WRITABLE)
                             .unwrap();
                     } else {
                         debug!("token {} can receive something", handler.token.0);
-                        poll.reregister(&handler.socket, handler.token,
-                                        Ready::readable(), PollOpt::edge())
+                        poll.registry().reregister(&mut handler.socket, handler.token,
+                                        Interest::READABLE)
                             .unwrap();
                     }
                     handlers.insert(handler.token, handler);
