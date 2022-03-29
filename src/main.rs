@@ -32,8 +32,8 @@ fn get_header<'a>(headers: &'a Vec<Header>, name: &str) -> Option<&'a str> {
 
 fn res_sec_websocket_accept(req_sec_websocket_key: &str) -> String {
     let mut hasher = Sha1::new();
-    hasher.input(req_sec_websocket_key.to_owned() + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
-    base64::encode(hasher.result())
+    hasher.update(req_sec_websocket_key.to_owned() + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+    base64::encode(hasher.finalize())
 }
 
 // https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers
